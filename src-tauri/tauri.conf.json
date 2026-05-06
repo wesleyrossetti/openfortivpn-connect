@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OpenFortiVpn Connect",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "identifier": "com.openfortivpn-connect.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -43,12 +43,18 @@
     ],
     "linux": {
       "deb": {
+        "depends": [
+          "libayatana-appindicator3-1"
+        ],
         "files": {
           "/usr/lib/openfortivpn-connect/openfortivpn": "openfortivpn/openfortivpn",
           "/usr/lib/openfortivpn-connect/openvpngui-helper": "target/release/openvpngui-helper"
         }
       },
       "rpm": {
+        "depends": [
+          "libayatana-appindicator-gtk3"
+        ],
         "files": {
           "/usr/lib/openfortivpn-connect/openfortivpn": "openfortivpn/openfortivpn",
           "/usr/lib/openfortivpn-connect/openvpngui-helper": "target/release/openvpngui-helper"
