@@ -90,6 +90,7 @@ mod tests {
             host: "vpn.example.com".into(),
             port: 8443,
             auth_type: AuthType::Saml,
+            user_cert: None,
             ..Default::default()
         };
         let saved = store.upsert(profile).unwrap();

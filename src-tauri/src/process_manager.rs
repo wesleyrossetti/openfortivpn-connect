@@ -1,21 +1,23 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri::async_runtime::JoinHandle;
 
 use crate::dns_manager::{self, DnsInfo};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::helper_client;
 use crate::models::{BandwidthPayload, ConnectionState, ConnectionStatusPayload, LogLinePayload};
 
 pub struct ProcessManager {
     pid: Option<u32>,
     log_file_path: Option<PathBuf>,
+    runtime_paths: Vec<PathBuf>,
     stop_flag: Arc<AtomicBool>,
     monitor_handle: Option<JoinHandle<()>>,
     /// Original default gateway saved before connecting, to restore on disconnect
@@ -27,6 +29,7 @@ impl ProcessManager {
         Self {
             pid: None,
             log_file_path: None,
+            runtime_paths: Vec::new(),
             stop_flag: Arc::new(AtomicBool::new(false)),
             monitor_handle: None,
             original_gateway: None,
@@ -40,6 +43,7 @@ impl ProcessManager {
         app_handle: AppHandle,
         debug_mode: bool,
         dns_fallback: bool,
+        pkcs11_provider: Option<String>,
     ) -> Result<(), String> {
         // Capture the current default gateway before connecting
         self.original_gateway = get_default_gateway();
@@ -64,17 +68,17 @@ impl ProcessManager {
         File::create(&log_path)
             .map_err(|e| format!("Failed to create log file: {}", e))?;
 
-        let pid = match helper_client::spawn_vpn(&args, log_path.to_str().unwrap()) {
-            Ok(pid) => {
-                log::info!("Spawned openfortivpn via helper daemon");
-                pid
-            }
-            Err(e) if helper_client::is_connection_error(&e) => {
-                log::info!("Helper unavailable ({}), falling back to osascript", e);
-                self.spawn_vpn_osascript(&args, &log_path)?
-            }
-            Err(e) => return Err(e),
-        };
+        let mut env_vars = Vec::new();
+        let vpn_binary = preferred_openfortivpn_path(&app_handle)?;
+
+        if let Some(provider_path) = pkcs11_provider {
+            let openssl_conf = write_pkcs11_openssl_config(&provider_path)?;
+            env_vars.push(("OPENSSL_CONF".to_string(), openssl_conf.display().to_string()));
+            env_vars.push(("PKCS11_PROVIDER_MODULE".to_string(), provider_path));
+            self.runtime_paths.push(openssl_conf);
+        }
+
+        let pid = self.spawn_vpn_privileged(&app_handle, &vpn_binary, &args, &env_vars, &log_path)?;
 
         log::info!("openfortivpn started with PID {}", pid);
 
@@ -91,7 +95,57 @@ impl ProcessManager {
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
+    fn spawn_vpn_privileged(&self, args: &[String], log_path: &PathBuf) -> Result<u32, String> {
+        match helper_client::spawn_vpn(args, log_path.to_str().unwrap()) {
+            Ok(pid) => {
+                log::info!("Spawned openfortivpn via helper daemon");
+                Ok(pid)
+            }
+            Err(e) if helper_client::is_connection_error(&e) => {
+                log::info!("Helper unavailable ({}), falling back to osascript", e);
+                self.spawn_vpn_osascript(args, log_path)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn spawn_vpn_privileged(&self, app_handle: &AppHandle, binary_path: &str, args: &[String], env_vars: &[(String, String)], log_path: &PathBuf) -> Result<u32, String> {
+        let log_file = OpenOptions::new()
+            .append(true)
+            .open(log_path)
+            .map_err(|e| format!("Failed to open log file: {}", e))?;
+        let stderr_file = log_file
+            .try_clone()
+            .map_err(|e| format!("Failed to clone log handle: {}", e))?;
+
+        if !is_running_as_root() {
+            ensure_linux_helper_running(app_handle)?;
+            return helper_client::spawn_vpn_with_options(
+                Some(binary_path),
+                args,
+                env_vars,
+                log_path.to_str().ok_or_else(|| "Invalid log path".to_string())?,
+            );
+        }
+
+        let child = {
+            let mut command = Command::new(binary_path);
+            command
+                .envs(env_vars.iter().cloned())
+                .args(args)
+                .stdout(Stdio::from(log_file))
+                .stderr(Stdio::from(stderr_file));
+            command.spawn()
+        }
+        .map_err(|e| format!("Failed to start openfortivpn: {}", e))?;
+
+        Ok(child.id())
+    }
+
     /// Fallback: spawn openfortivpn via osascript with admin privileges.
+    #[cfg(target_os = "macos")]
     fn spawn_vpn_osascript(&self, args: &[String], log_path: &PathBuf) -> Result<u32, String> {
         let quoted_args: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
         let ovpn_args = quoted_args.join(" ");
@@ -142,16 +196,7 @@ impl ProcessManager {
                 self.original_gateway
             );
 
-            match helper_client::kill_vpn(pid, self.original_gateway.as_deref()) {
-                Ok(()) => {
-                    log::info!("Killed openfortivpn via helper daemon");
-                }
-                Err(e) if helper_client::is_connection_error(&e) => {
-                    log::info!("Helper unavailable ({}), falling back to osascript", e);
-                    self.kill_vpn_osascript(pid)?;
-                }
-                Err(e) => return Err(e),
-            }
+            self.kill_vpn_privileged(pid)?;
         } else {
             // No PID but still clean up DNS just in case
             let _ = dns_manager::teardown_dns();
@@ -164,10 +209,58 @@ impl ProcessManager {
             let _ = fs::remove_file(&path);
         }
 
+        for path in self.runtime_paths.drain(..) {
+            let _ = fs::remove_file(path);
+        }
+
         Ok(())
     }
 
     /// Fallback: kill openfortivpn via osascript with admin privileges.
+    #[cfg(target_os = "macos")]
+    fn kill_vpn_privileged(&self, pid: u32) -> Result<(), String> {
+        match helper_client::kill_vpn(pid, self.original_gateway.as_deref()) {
+            Ok(()) => {
+                log::info!("Killed openfortivpn via helper daemon");
+                Ok(())
+            }
+            Err(e) if helper_client::is_connection_error(&e) => {
+                log::info!("Helper unavailable ({}), falling back to osascript", e);
+                self.kill_vpn_osascript(pid)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn kill_vpn_privileged(&self, pid: u32) -> Result<(), String> {
+        match helper_client::kill_vpn(pid, self.original_gateway.as_deref()) {
+            Ok(()) => return Ok(()),
+            Err(e) if helper_client::is_connection_error(&e) => {
+                log::info!("Helper unavailable ({}), falling back to pkexec kill", e);
+            }
+            Err(e) => return Err(e),
+        }
+
+        if is_running_as_root() {
+            kill_pid_with_signal(pid, "-INT")?;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let _ = kill_pid_with_signal(pid, "-KILL");
+            return Ok(());
+        }
+
+        if command_exists("pkexec") {
+            kill_pid_with_signal_via_pkexec(pid, "-INT")?;
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let _ = kill_pid_with_signal_via_pkexec(pid, "-KILL");
+            return Ok(());
+        }
+
+        Err("pkexec is required on Linux to stop openfortivpn with privileges".to_string())
+    }
+
+    /// Fallback: kill openfortivpn via osascript with admin privileges.
+    #[cfg(target_os = "macos")]
     fn kill_vpn_osascript(&self, pid: u32) -> Result<(), String> {
         let gateway_restore = if let Some(ref gw) = self.original_gateway {
             format!(
@@ -220,6 +313,173 @@ impl ProcessManager {
     pub fn is_running(&self) -> bool {
         self.pid.is_some()
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn preferred_openfortivpn_path(app_handle: &AppHandle) -> Result<String, String> {
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        for candidate in [
+            resource_dir.join("openfortivpn"),
+            resource_dir.join("openfortivpn/openfortivpn"),
+        ] {
+            if candidate.exists() {
+                return Ok(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    let candidates = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("openfortivpn/openfortivpn"),
+        PathBuf::from("/usr/local/bin/openfortivpn"),
+        PathBuf::from("/usr/bin/openfortivpn"),
+    ];
+
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().into_owned())
+        .ok_or_else(|| "No openfortivpn binary found on Linux".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn preferred_openfortivpn_path() -> Result<String, String> {
+    Ok("/opt/homebrew/bin/openfortivpn".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_pkcs11_openssl_config(provider_path: &str) -> Result<PathBuf, String> {
+    let config_path = PathBuf::from(format!("/tmp/openvpngui-openssl-{}.cnf", uuid::Uuid::new_v4()));
+    let contents = format!(
+        "openssl_conf = openssl_init\n\
+config_diagnostics = 1\n\
+\n\
+[openssl_init]\n\
+providers = provider_sect\n\
+\n\
+[provider_sect]\n\
+default = default_sect\n\
+pkcs11 = pkcs11_sect\n\
+\n\
+[default_sect]\n\
+activate = 1\n\
+\n\
+[pkcs11_sect]\n\
+identity = pkcs11prov\n\
+module = /usr/lib64/ossl-modules/pkcs11.so\n\
+activate = 1\n\
+pkcs11-module-path = {provider_path}\n\
+pkcs11-module-cache-pins = cache\n\
+pkcs11-module-login-behavior = always\n"
+    );
+    fs::write(&config_path, contents)
+        .map_err(|e| format!("Failed to write OpenSSL PKCS#11 config: {}", e))?;
+    Ok(config_path)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn command_exists(name: &str) -> bool {
+    Command::new("sh")
+        .args(["-c", &format!("command -v {} >/dev/null 2>&1", name)])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_running_as_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn kill_pid_with_signal(pid: u32, signal: &str) -> Result<(), String> {
+    let status = Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status()
+        .map_err(|e| format!("Failed to run kill: {}", e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("kill {} {} failed with status {}", signal, pid, status))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn kill_pid_with_signal_via_pkexec(pid: u32, signal: &str) -> Result<(), String> {
+    let status = Command::new("pkexec")
+        .args(["kill", signal, &pid.to_string()])
+        .status()
+        .map_err(|e| format!("Failed to run pkexec kill: {}", e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "pkexec kill {} {} failed with status {}",
+            signal, pid, status
+        ))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_linux_helper_running(app_handle: &AppHandle) -> Result<(), String> {
+    if helper_client::ping().is_ok() {
+        return Ok(());
+    }
+
+    if !command_exists("pkexec") {
+        return Err("pkexec is required to start the privileged helper".to_string());
+    }
+
+    let helper_path = linux_helper_binary_path(app_handle)?;
+    log::info!("Starting privileged helper via pkexec: {}", helper_path.display());
+
+    Command::new("pkexec")
+        .arg(helper_path)
+        .spawn()
+        .map_err(|e| format!("Failed to start privileged helper via pkexec: {}", e))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if helper_client::ping().is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    Err("Privileged helper did not become ready".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn linux_helper_binary_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        for candidate in [
+            resource_dir.join("openvpngui-helper"),
+            resource_dir.join("target/release/openvpngui-helper"),
+            resource_dir.join("target/debug/openvpngui-helper"),
+        ] {
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("target/debug/openvpngui-helper"),
+        manifest_dir.join("target/release/openvpngui-helper"),
+        manifest_dir
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("src-tauri/target/debug/openvpngui-helper"),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "openvpngui-helper binary not found; run npm run build:helper".to_string())
 }
 
 async fn start_log_monitor(

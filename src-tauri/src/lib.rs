@@ -35,6 +35,7 @@ pub fn run() {
             commands::check_helper_status,
             commands::install_helper,
             commands::uninstall_helper,
+            commands::suggest_certificate_tokens,
         ])
         .setup(|app| {
             tray::setup_tray(app)?;

@@ -13,6 +13,7 @@ import { CertDialog } from "./components/CertDialog";
 import { Settings } from "./components/Settings";
 import { About } from "./components/About";
 import { HelperInstallDialog } from "./components/HelperInstallDialog";
+import { TokenPinDialog } from "./components/TokenPinDialog";
 import type { VpnProfile, CertWarningPayload } from "./types";
 
 type EditingState = null | "new" | VpnProfile;
@@ -29,6 +30,7 @@ function App() {
   const [certWarning, setCertWarning] = useState<CertWarningPayload | null>(null);
   const [currentView, setCurrentView] = useState<AppView>("main");
   const [showHelperInstall, setShowHelperInstall] = useState(false);
+  const [showTokenPinDialog, setShowTokenPinDialog] = useState(false);
 
   // Listen for cert warnings
   useEffect(() => {
@@ -108,12 +110,32 @@ function App() {
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
   const profileName = selectedProfile?.name ?? "";
 
-  const handleConnect = async () => {
+  const connectSelectedProfile = async (tokenPin?: string) => {
     if (!selectedProfileId) return;
+    await connect(selectedProfileId, tokenPin);
+  };
+
+  const handleConnect = async () => {
+    if (!selectedProfile) return;
+
+    if (selectedProfile.auth_type === "CertificateToken") {
+      setShowTokenPinDialog(true);
+      return;
+    }
+
     try {
-      await connect(selectedProfileId);
+      await connectSelectedProfile();
     } catch {
       // Error is handled via status events
+    }
+  };
+
+  const handleTokenPinSubmit = async (tokenPin: string) => {
+    try {
+      await connectSelectedProfile(tokenPin);
+      setShowTokenPinDialog(false);
+    } catch (e) {
+      throw e;
     }
   };
 
@@ -125,8 +147,8 @@ function App() {
     }
   };
 
-  const handleSave = async (profile: VpnProfile, password?: string) => {
-    await saveProfile(profile, password);
+  const handleSave = async (profile: VpnProfile, password?: string, tokenPin?: string) => {
+    await saveProfile(profile, password, tokenPin);
     setEditing(null);
   };
 
@@ -276,6 +298,13 @@ function App() {
           onDeclined={handleHelperDeclined}
         />
       )}
+
+      <TokenPinDialog
+        profileName={selectedProfile?.name ?? "Certificate Token"}
+        isOpen={showTokenPinDialog}
+        onSubmit={handleTokenPinSubmit}
+        onCancel={() => setShowTokenPinDialog(false)}
+      />
     </div>
   );
 }

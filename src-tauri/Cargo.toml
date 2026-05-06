@@ -4,7 +4,7 @@ members = [".", "helper"]
 [package]
 name = "openvpngui"
 version = "0.1.7"
-description = "OpenFortiVpn Connect - A macOS VPN client"
+description = "OpenFortiVpn Connect - A desktop VPN client"
 authors = ["you"]
 license = "MIT"
 repository = "https://github.com/walcew/openfortivpn-connect"
@@ -23,10 +23,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
-security-framework = "3"
 tokio = { version = "1", features = ["full"] }
-tauri = { version = "2.10.3", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri = { version = "2.10.3", features = ["tray-icon", "image-png"] }
 window-vibrancy = "0.6"
 tauri-plugin-opener = "2"
 log = "0.4"
 dirs = "6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"

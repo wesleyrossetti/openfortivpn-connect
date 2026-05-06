@@ -10,6 +10,10 @@ pub enum Request {
     SpawnVpn {
         args: Vec<String>,
         log_path: String,
+        #[serde(default)]
+        binary_path: Option<String>,
+        #[serde(default)]
+        env_vars: Vec<(String, String)>,
     },
 
     #[serde(rename = "kill-vpn")]

@@ -3,8 +3,10 @@ export interface VpnProfile {
   name: string;
   host: string;
   port: number;
-  auth_type: "Password" | "Saml";
+  auth_type: "Password" | "Saml" | "CertificateToken";
   username: string | null;
+  user_cert: string | null;
+  pkcs11_provider: string | null;
   realm: string | null;
   trusted_certs: string[];
   extra_args: string[];
@@ -43,6 +45,12 @@ export interface BandwidthData {
   timestamp: string;
 }
 
+export interface CertificateTokenSuggestion {
+  uri: string;
+  display_name: string;
+  provider: string;
+}
+
 export function newProfile(): VpnProfile {
   return {
     id: "",
@@ -51,6 +59,8 @@ export function newProfile(): VpnProfile {
     port: 8443,
     auth_type: "Password",
     username: null,
+    user_cert: null,
+    pkcs11_provider: null,
     realm: null,
     trusted_certs: [],
     extra_args: [],

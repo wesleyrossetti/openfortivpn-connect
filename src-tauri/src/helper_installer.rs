@@ -45,6 +45,7 @@ pub struct HelperStatus {
 }
 
 /// Check the current status of the helper daemon.
+#[cfg(target_os = "macos")]
 pub fn check_status() -> HelperStatus {
     let installed = Path::new(HELPER_INSTALL_PATH).exists()
         && Path::new(PLIST_INSTALL_PATH).exists();
@@ -69,6 +70,7 @@ pub fn check_status() -> HelperStatus {
 
 /// Install the helper daemon using osascript (one-time admin password).
 /// The helper binary is read from the app bundle's resources.
+#[cfg(target_os = "macos")]
 pub fn install(app_handle: &AppHandle) -> Result<(), String> {
     // Locate the helper binary in the app bundle resources
     let resource_dir = app_handle
@@ -141,6 +143,7 @@ pub fn install(app_handle: &AppHandle) -> Result<(), String> {
 }
 
 /// Uninstall the helper daemon.
+#[cfg(target_os = "macos")]
 pub fn uninstall() -> Result<(), String> {
     let script = format!(
         "do shell script \"\
@@ -168,4 +171,24 @@ pub fn uninstall() -> Result<(), String> {
 
     log::info!("Helper daemon uninstalled");
     Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn check_status() -> HelperStatus {
+    HelperStatus {
+        installed: false,
+        running: false,
+        version: None,
+        needs_update: false,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install(_app_handle: &AppHandle) -> Result<(), String> {
+    Err("Privileged helper installation is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn uninstall() -> Result<(), String> {
+    Err("Privileged helper installation is only supported on macOS".to_string())
 }

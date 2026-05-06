@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:openfortivpn": "cd src-tauri/openfortivpn && ./autogen.sh && ./configure && make",
     "build:helper": "cd src-tauri && cargo build --release -p openvpngui-helper",
     "prebuild": "npm run build:helper",
     "preview": "vite preview",

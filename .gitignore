@@ -6,3 +6,13 @@ target
 docs/superpowers/
 docs/plans/
 docs/specs/
+
+# Embedded openfortivpn build outputs
+src-tauri/openfortivpn/Makefile
+src-tauri/openfortivpn/Makefile.in
+src-tauri/openfortivpn/autom4te.cache/
+src-tauri/openfortivpn/config.log
+src-tauri/openfortivpn/config.status
+src-tauri/openfortivpn/openfortivpn
+src-tauri/openfortivpn/src/*.o
+src-tauri/openfortivpn/src/.dirstamp
