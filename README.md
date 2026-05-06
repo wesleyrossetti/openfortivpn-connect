@@ -50,7 +50,7 @@ The Linux port uses `pkexec` for privilege escalation when connecting and discon
 ### Homebrew
 
 ```bash
-brew tap walcew/tap
+brew tap wesleyrossetti/tap
 brew install --cask openfortivpn-connect
 ```
 
@@ -58,7 +58,7 @@ This installs the macOS build and the openfortivpn dependency.
 
 ### Manual
 
-Download the `.dmg` for your architecture from [Releases](https://github.com/walcew/openfortivpn-connect/releases):
+Download the `.dmg` for your architecture from [Releases](https://github.com/wesleyrossetti/openfortivpn-connect/releases):
 
 - **Apple Silicon (M1/M2/M3/M4):** `OpenFortiVpn.Connect_x.x.x_aarch64.dmg`
 - **Intel:** `OpenFortiVpn.Connect_x.x.x_x64.dmg`
@@ -146,4 +146,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Author
 
-**Wallacy Santos Ferreira** — [@walcew](https://github.com/walcew)
+**Wallacy Santos Ferreira**

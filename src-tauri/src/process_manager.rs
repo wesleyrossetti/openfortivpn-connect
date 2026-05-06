@@ -321,6 +321,7 @@ fn preferred_openfortivpn_path(app_handle: &AppHandle) -> Result<String, String>
         for candidate in [
             resource_dir.join("openfortivpn"),
             resource_dir.join("openfortivpn/openfortivpn"),
+            resource_dir.join("openfortivpn-connect/openfortivpn"),
         ] {
             if candidate.exists() {
                 return Ok(candidate.to_string_lossy().into_owned());
@@ -330,6 +331,7 @@ fn preferred_openfortivpn_path(app_handle: &AppHandle) -> Result<String, String>
 
     let candidates = [
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("openfortivpn/openfortivpn"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/openfortivpn"),
         PathBuf::from("/usr/local/bin/openfortivpn"),
         PathBuf::from("/usr/bin/openfortivpn"),
     ];

@@ -97,7 +97,49 @@ pub fn openfortivpn_path() -> &'static str {
 }
 
 pub fn is_allowed_openfortivpn_path(path: &str) -> bool {
-    allowed_openfortivpn_paths().contains(&path)
+    // Canonicalize input path to resolve any `..` components
+    let canonical_input = std::fs::canonicalize(path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string());
+
+    // Static list check (canonicalize each allowed path too)
+    for allowed in allowed_openfortivpn_paths() {
+        let canonical_allowed = std::fs::canonicalize(allowed)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| allowed.to_string());
+        if canonical_input == canonical_allowed {
+            return true;
+        }
+    }
+
+    // Policy-based check: filename must be exactly "openfortivpn"
+    // and parent directory must be under a trusted prefix.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let p = std::path::Path::new(&canonical_input);
+        if p.file_name() == Some(std::ffi::OsStr::new("openfortivpn")) {
+            let trusted_prefixes = [
+                "/usr/",
+                "/opt/",
+                "/usr/lib/openfortivpn-connect/",
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../target/"),
+            ];
+            if let Some(parent) = p.parent() {
+                let parent_str = parent.to_string_lossy();
+                for prefix in &trusted_prefixes {
+                    // Canonicalize the prefix to resolve any `..` segments
+                    let canon_prefix = std::fs::canonicalize(prefix.trim_end_matches('/'))
+                        .map(|p| p.to_string_lossy().to_string() + "/")
+                        .unwrap_or_else(|_| prefix.to_string());
+                    if parent_str.starts_with(prefix) || parent_str.starts_with(&canon_prefix) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
 fn allowed_openfortivpn_paths() -> &'static [&'static str] {
@@ -109,7 +151,14 @@ fn allowed_openfortivpn_paths() -> &'static [&'static str] {
     #[cfg(not(target_os = "macos"))]
     {
         &[
-            "/home/wesley/openfortivpn-connect/src-tauri/openfortivpn/openfortivpn",
+            // Path compiled into source tree (dev build from source)
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../openfortivpn/openfortivpn"),
+            // Tauri dev mode can resolve resources inside src-tauri/target/debug/
+            concat!(env!("CARGO_MANIFEST_DIR"), "/target/debug/openfortivpn"),
+            // Tauri dev mode: resources copied to target/debug/
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../target/debug/openfortivpn"),
+            // Packaged deb/rpm (Tauri bundles resources under /usr/lib/{product-name}/)
+            "/usr/lib/openfortivpn-connect/openfortivpn",
             "/usr/local/bin/openfortivpn",
             "/usr/bin/openfortivpn",
         ]
