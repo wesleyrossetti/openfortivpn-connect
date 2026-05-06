@@ -20,11 +20,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
-            target: aarch64-apple-darwin
-            arch: aarch64
-          - platform: macos-latest
-            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             arch: x86_64
     runs-on: ${{ matrix.platform }}
 
@@ -49,8 +46,30 @@ jobs:
           workspaces: './src-tauri -> target'
           shared-key: ${{ matrix.target }}
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config \
+            automake \
+            autoconf \
+            libtool \
+            rpm
+
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Build openfortivpn
+        run: |
+          cd src-tauri/openfortivpn
+          ./autogen.sh
+          ./configure
+          make
 
       - name: Build helper binary
         run: |
@@ -63,13 +82,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing (uncomment when ready):
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: v__VERSION__
           releaseName: 'OpenFortiVpn Connect v__VERSION__'
@@ -99,19 +111,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download release DMGs
+      - name: Download release packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${{ steps.tag.outputs.tag }}" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "*.dmg" \
+            --pattern "*.deb" \
+            --pattern "*.rpm" \
             --dir ./artifacts
 
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.dmg > checksums-sha256.txt
+          sha256sum *.deb *.rpm > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Upload checksums to release
@@ -128,22 +141,21 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Homebrew tap update
+      - name: Trigger Linux package repository update
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          PKG_REPO_TOKEN: ${{ secrets.PKG_REPO_TOKEN }}
         run: |
           VERSION="${{ needs.checksums.outputs.tag }}"
           VERSION="${VERSION#v}"
           curl -fsSL -X POST \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $HOMEBREW_TAP_TOKEN" \
-            "https://api.github.com/repos/walcew/homebrew-tap/dispatches" \
+            -H "Authorization: Bearer $PKG_REPO_TOKEN" \
+            "https://api.github.com/repos/walcew/openfortivpn-connect/dispatches" \
             -d "{
-              \"event_type\": \"update-cask\",
+              \"event_type\": \"update-packages\",
               \"client_payload\": {
-                \"cask\": \"openfortivpn-connect\",
                 \"version\": \"$VERSION\",
                 \"repo\": \"walcew/openfortivpn-connect\",
-                \"asset_pattern\": \"OpenFortiVpn.Connect_{version}_{arch}.dmg\"
+                \"asset_pattern\": \"openfortivpn-connect_{version}_amd64.deb\"
               }
             }"

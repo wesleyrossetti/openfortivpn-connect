@@ -68,10 +68,22 @@ pub fn ping() -> Result<String, String> {
 
 /// Spawn openfortivpn via the helper. Returns the PID.
 pub fn spawn_vpn(args: &[String], log_path: &str) -> Result<u32, String> {
+    spawn_vpn_with_options(None, args, &[], log_path)
+}
+
+/// Spawn openfortivpn via the helper with explicit binary/env options.
+pub fn spawn_vpn_with_options(
+    binary_path: Option<&str>,
+    args: &[String],
+    env_vars: &[(String, String)],
+    log_path: &str,
+) -> Result<u32, String> {
     let request = serde_json::json!({
         "cmd": "spawn-vpn",
         "args": args,
         "log_path": log_path,
+        "binary_path": binary_path,
+        "env_vars": env_vars,
     });
     let resp = send_request(&request.to_string())?;
     resp.pid

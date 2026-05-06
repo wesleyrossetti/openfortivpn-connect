@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum AuthType {
     Password,
     Saml,
+    CertificateToken,
 }
 
 impl Default for AuthType {
@@ -21,6 +22,8 @@ pub struct VpnProfile {
     pub port: u16,
     pub auth_type: AuthType,
     pub username: Option<String>,
+    pub user_cert: Option<String>,
+    pub pkcs11_provider: Option<String>,
     pub realm: Option<String>,
     pub trusted_certs: Vec<String>,
     pub extra_args: Vec<String>,
@@ -35,6 +38,8 @@ impl Default for VpnProfile {
             port: 8443,
             auth_type: AuthType::default(),
             username: None,
+            user_cert: None,
+            pkcs11_provider: None,
             realm: None,
             trusted_certs: Vec::new(),
             extra_args: Vec::new(),
@@ -138,4 +143,11 @@ pub struct BandwidthPayload {
     pub rx_speed: f64,
     pub tx_speed: f64,
     pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertificateTokenSuggestion {
+    pub uri: String,
+    pub display_name: String,
+    pub provider: String,
 }

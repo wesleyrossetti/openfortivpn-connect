@@ -75,7 +75,14 @@ impl VpnManager {
         crate::tray::update_tray_icon(app_handle, &self.state);
     }
 
-    pub fn connect(&mut self, profile_id: &str, app_handle: AppHandle, debug_mode: bool, dns_fallback: bool) -> Result<(), String> {
+    pub fn connect(
+        &mut self,
+        profile_id: &str,
+        app_handle: AppHandle,
+        debug_mode: bool,
+        dns_fallback: bool,
+        token_pin: Option<String>,
+    ) -> Result<(), String> {
         // Validate state
         match &self.state {
             ConnectionState::Disconnected | ConnectionState::Error { .. } => {}
@@ -98,6 +105,7 @@ impl VpnManager {
 
         // Build args
         let mut args = vec![format!("{}:{}", profile.host, profile.port)];
+        let mut pkcs11_provider = None;
 
         match profile.auth_type {
             AuthType::Password => {
@@ -113,6 +121,41 @@ impl VpnManager {
             AuthType::Saml => {
                 args.push("--saml-login".to_string());
             }
+            AuthType::CertificateToken => {
+                if let Some(ref username) = profile.username {
+                    if !username.trim().is_empty() {
+                        args.push("-u".to_string());
+                        args.push(username.clone());
+                    }
+                }
+                if let Some(ref user_cert) = profile.user_cert {
+                    if !user_cert.trim().is_empty() {
+                        let mut cert_uri = user_cert.trim().to_string();
+                        if cert_uri.starts_with("pkcs11:") {
+                            if !cert_uri.contains("pin-value=") {
+                                let runtime_pin = token_pin
+                                    .clone()
+                                    .filter(|pin| !pin.trim().is_empty());
+                                let stored_pin = if runtime_pin.is_none() {
+                                    keychain::get_token_pin(&profile.id)?
+                                } else {
+                                    None
+                                };
+                                let token_pin = runtime_pin
+                                    .or(stored_pin)
+                                    .ok_or_else(|| "Token PIN is required for certificate token authentication".to_string())?;
+                                cert_uri = append_pkcs11_pin_value(&cert_uri, &token_pin);
+                            }
+                            pkcs11_provider = profile.pkcs11_provider.clone().or_else(default_pkcs11_provider);
+                        }
+                        args.push(format!("--user-cert={}", cert_uri));
+                    } else {
+                        return Err("Certificate/token URI is required for certificate token authentication".to_string());
+                    }
+                } else {
+                    return Err("Certificate/token URI is required for certificate token authentication".to_string());
+                }
+            }
         }
 
         for cert in &profile.trusted_certs {
@@ -123,10 +166,12 @@ impl VpnManager {
             args.push(format!("--realm={}", realm));
         }
 
-        // Disable openfortivpn's DNS handling — we manage DNS via scutil on macOS
-        // because macOS ignores /etc/resolv.conf
-        args.push("--set-dns=0".to_string());
-        args.push("--pppd-use-peerdns=0".to_string());
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            // DNS is managed by the app: scutil on macOS and systemd-resolved on Linux.
+            args.push("--set-dns=0".to_string());
+            args.push("--pppd-use-peerdns=0".to_string());
+        }
 
         // Enable verbose logging so we can capture DNS server info from debug output
         args.push("-v".to_string());
@@ -136,7 +181,7 @@ impl VpnManager {
         // Spawn the process
         match self
             .process_manager
-            .spawn_vpn(args, profile_id.to_string(), app_handle.clone(), debug_mode, dns_fallback)
+            .spawn_vpn(args, profile_id.to_string(), app_handle.clone(), debug_mode, dns_fallback, pkcs11_provider)
         {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -193,4 +238,36 @@ impl VpnManager {
         let _ = keychain::delete_password(profile_id);
         Ok(())
     }
+}
+
+fn append_pkcs11_pin_value(uri: &str, token_pin: &str) -> String {
+    let separator = if uri.contains('?') { '&' } else { ';' };
+    format!("{uri}{separator}pin-value={}", encode_pkcs11_component(token_pin))
+}
+
+fn encode_pkcs11_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    encoded
+}
+
+fn default_pkcs11_provider() -> Option<String> {
+    [
+        "/usr/lib64/libeToken.so",
+        "/usr/lib64/libeTPkcs11.so",
+        "/usr/lib64/libIDPrimePKCS11.so",
+        "/usr/lib64/opensc-pkcs11.so",
+        "/usr/lib/pkcs11/libeToken.so",
+        "/usr/lib/pkcs11/libIDPrimePKCS11.so",
+    ]
+    .iter()
+    .find(|path| std::path::Path::new(path).exists())
+    .map(|path| path.to_string())
 }

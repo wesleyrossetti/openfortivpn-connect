@@ -11,7 +11,6 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -34,10 +33,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "resources": {
-      "target/release/openvpngui-helper": "openvpngui-helper"
-    },
+    "targets": ["deb", "rpm"],
+    "resources": [
+      "openfortivpn/openfortivpn",
+      "target/release/openvpngui-helper"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,6 +1,6 @@
 # OpenFortiVpn Connect
 
-A lightweight, open-source macOS GUI client for [openfortivpn](https://github.com/adrienverge/openfortivpn).
+A lightweight, open-source desktop GUI client for [openfortivpn](https://github.com/adrienverge/openfortivpn).
 
 ![OpenFortiVpn Connect](docs/screenshots/openfortivpn-connect.png)
 
@@ -23,16 +23,38 @@ The UI is inspired by [OpenVPN Connect](https://openvpn.net/client/) — simple,
 - **Real-time logs** — monitor connection logs with optional debug mode
 - **Lightweight** — small binary, minimal resource usage
 
+## Platform Support
+
+- `macOS`: original upstream target, with native Keychain, helper, and DNS integration
+- `Linux/Fedora`: experimental port in progress, using `pkexec` and the system `openfortivpn`
+
 ## Installation
 
-### Homebrew (recommended)
+### Fedora
+
+Install the runtime packages:
+
+```bash
+sudo dnf install openfortivpn polkit
+```
+
+For development and local builds, install the toolchain:
+
+```bash
+sudo dnf install gcc gcc-c++ make pkg-config openssl-devel webkit2gtk4.1-devel \
+  javascriptcoregtk4.1-devel libsoup3-devel gtk3-devel libappindicator-gtk3-devel
+```
+
+The Linux port uses `pkexec` for privilege escalation when connecting and disconnecting. The app prefers the bundled `openfortivpn` binary shipped inside the package and falls back to `/usr/local/bin/openfortivpn` or `/usr/bin/openfortivpn` when running from the source tree.
+
+### Homebrew
 
 ```bash
 brew tap walcew/tap
 brew install --cask openfortivpn-connect
 ```
 
-This will automatically install [openfortivpn](https://github.com/adrienverge/openfortivpn) as a dependency.
+This installs the macOS build and the openfortivpn dependency.
 
 ### Manual
 
@@ -52,6 +74,12 @@ brew install openfortivpn
 - macOS 12 (Monterey) or later
 - [openfortivpn](https://github.com/adrienverge/openfortivpn)
 
+For the Linux/Fedora port:
+
+- Fedora with a graphical Polkit agent available
+- `openfortivpn` built in `src-tauri/openfortivpn/openfortivpn`, or installed at `/usr/local/bin/openfortivpn` or `/usr/bin/openfortivpn`
+- `pkexec` available for privileged launch
+
 ## Building from Source
 
 ### Requirements
@@ -64,10 +92,29 @@ brew install openfortivpn
 
 ```bash
 npm install
+npm run build:openfortivpn
 cargo tauri build
 ```
 
 The built `.app` will be in `src-tauri/target/release/bundle/macos/`.
+
+### Fedora RPM
+
+To generate an RPM bundle on Fedora:
+
+```bash
+npm install
+npm run build:openfortivpn
+cargo tauri build --bundles rpm
+```
+
+The RPM will be written under `src-tauri/target/release/bundle/rpm/`.
+
+If you are packaging for installation outside the source tree, the bundle already includes:
+
+- the embedded `openfortivpn` binary
+- the Linux helper used for `pkexec` and DNS handling
+- the Tauri desktop application
 
 ### Development
 
@@ -80,8 +127,8 @@ cargo tauri dev
 - **Backend:** [Tauri v2](https://tauri.app/) + Rust
 - **Frontend:** React 19 + TypeScript + Tailwind CSS v4
 - **VPN engine:** [openfortivpn](https://github.com/adrienverge/openfortivpn) (CLI)
-- **Security:** macOS Keychain for credential storage
-- **DNS:** Native macOS `scutil` integration
+- **Security:** macOS Keychain on macOS, local config-backed storage on Linux
+- **DNS:** Native macOS `scutil` integration on macOS, native `openfortivpn` handling on Linux
 
 ## Credits
 

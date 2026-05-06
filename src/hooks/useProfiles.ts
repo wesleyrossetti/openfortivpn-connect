@@ -22,10 +22,11 @@ export function useProfiles() {
     fetchProfiles();
   }, [fetchProfiles]);
 
-  const saveProfile = async (profile: VpnProfile, password?: string) => {
+  const saveProfile = async (profile: VpnProfile, password?: string, tokenPin?: string) => {
     const saved = await invoke<VpnProfile>("save_profile", {
       profile,
       password: password || null,
+      tokenPin: tokenPin || null,
     });
     await fetchProfiles();
     return saved;

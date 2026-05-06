@@ -60,8 +60,69 @@ pub fn validate_vpn_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_env_vars(env_vars: &[(String, String)]) -> Result<(), String> {
+    for (key, value) in env_vars {
+        match key.as_str() {
+            "OPENSSL_CONF" => {
+                if !value.starts_with("/tmp/openvpngui-openssl-") || value.contains("..") {
+                    return Err(format!("Invalid OPENSSL_CONF path: {}", value));
+                }
+            }
+            "PKCS11_PROVIDER_MODULE" => {
+                if !value.starts_with("/usr/lib") && !value.starts_with("/opt/") {
+                    return Err(format!("Invalid PKCS11 provider path: {}", value));
+                }
+            }
+            _ => return Err(format!("Blocked environment variable: {}", key)),
+        }
+    }
+    Ok(())
+}
+
+pub fn openfortivpn_path() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "/opt/homebrew/bin/openfortivpn"
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        for path in allowed_openfortivpn_paths() {
+            if std::path::Path::new(path).exists() {
+                return path;
+            }
+        }
+        "/usr/bin/openfortivpn"
+    }
+}
+
+pub fn is_allowed_openfortivpn_path(path: &str) -> bool {
+    allowed_openfortivpn_paths().contains(&path)
+}
+
+fn allowed_openfortivpn_paths() -> &'static [&'static str] {
+    #[cfg(target_os = "macos")]
+    {
+        &["/opt/homebrew/bin/openfortivpn"]
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        &[
+            "/home/wesley/openfortivpn-connect/src-tauri/openfortivpn/openfortivpn",
+            "/usr/local/bin/openfortivpn",
+            "/usr/bin/openfortivpn",
+        ]
+    }
+}
+
 /// The only binary we allow the helper to execute.
+#[cfg(target_os = "macos")]
 pub const OPENFORTIVPN_PATH: &str = "/opt/homebrew/bin/openfortivpn";
+
+/// The only binary we allow the helper to execute.
+#[cfg(not(target_os = "macos"))]
+pub const OPENFORTIVPN_PATH: &str = "/usr/bin/openfortivpn";
 
 #[cfg(test)]
 mod tests {
